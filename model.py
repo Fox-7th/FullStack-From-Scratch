@@ -65,11 +65,11 @@ def RoPE_q_k_combine(RoPE_compl_matrix, q_matrix, k_matrix):
     q_matrix = q_matrix.reshape(*q_matrix.shape[:-1], -1, 2)
     k_matrix = k_matrix.reshape(*k_matrix.shape[:-1], -1, 2) # [B, T, H, head_dim/2, 2]
 
-    q_matrix = torch.view_as_complex(q_matrix) # [B, T, H, head_dim/2]
-    k_matrix = torch.view_as_complex(k_matrix)
+    q_compl_matrix = torch.view_as_complex(q_matrix) # [B, T, H, head_dim/2]
+    k_compl_matrix = torch.view_as_complex(k_matrix)
 
-    q_matrix = q_matrix * RoPE_compl_matrix # [B, T, H, head_dim/2]
-    k_matrix = k_matrix * RoPE_compl_matrix
+    q_matrix = q_compl_matrix * RoPE_compl_matrix # [B, T, H, head_dim/2]
+    k_matrix = k_compl_matrix * RoPE_compl_matrix
 
     q_matrix = torch.view_as_real(q_matrix) # [B, T, H, head_dim/2, 2]
     k_matrix = torch.view_as_real(k_matrix)

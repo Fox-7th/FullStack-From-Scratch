@@ -46,7 +46,7 @@ train_file_name = "tokenizer_data.jsonl"
 train_data_path = os.path.join(data_dir, train_file_name)
 os.makedirs(data_dir, exist_ok = True)
 
-tokenizer_dir = "model"
+tokenizer_dir = "model/tokenizer"
 tokenizer_name = "tokenizer.json"
 tokenizer_path = os.path.join(tokenizer_dir, tokenizer_name)
 os.makedirs(tokenizer_dir, exist_ok = True)
