@@ -45,7 +45,7 @@ def RoPE_compl_matrix(head_dim, token_num: int = 32 * 1024, base: float = 1e5):
 # add position embedding into Q K matrix
 # input the entire matirx Q and K:  both [B, T, H, head_dim/2], H*head_dim = d_model(既是输入token的长度，也是每一层的隐藏维度)
 # output the entire matrix Q and K: both [B, T, H, head_dim/2].
-def RoPE_q_k_combine(RoPE_compl_matrix, q_matrix, k_matrix):
+def RoPE_q_k_combine(RoPE_compl_mat, q_mat, k_mat):
     # change RoPE matrix shape, for broading
     def RoPE_shape_align(RoPE_compl_matrix, q_k_matrix):
         q_k_mat_dim = q_k_matrix.ndim
@@ -56,23 +56,22 @@ def RoPE_q_k_combine(RoPE_compl_matrix, q_matrix, k_matrix):
         RoPE_compl_matrix = RoPE_compl_matrix.reshape(*shape)
         return RoPE_compl_matrix
 
+    q_mat = q_mat.reshape(*q_mat.shape[:-1], -1, 2)
+    k_mat = k_mat.reshape(*k_mat.shape[:-1], -1, 2) # [B, T, H, head_dim/2, 2]
 
-    q_matrix = q_matrix.reshape(*q_matrix.shape[:-1], -1, 2)
-    k_matrix = k_matrix.reshape(*k_matrix.shape[:-1], -1, 2) # [B, T, H, head_dim/2, 2]
+    q_mat = torch.view_as_complex(q_mat) # [B, T, H, head_dim/2]
+    k_mat = torch.view_as_complex(k_mat)
 
-    q_matrix = torch.view_as_complex(q_matrix) # [B, T, H, head_dim/2]
-    k_matrix = torch.view_as_complex(k_matrix)
+    RoPE_compl_mat = RoPE_shape_align(RoPE_compl_mat, q_mat) # [T, head_dim/2] -> [1, T, 1, head_dim/2]
 
-    RoPE_compl_matrix = RoPE_shape_align(RoPE_compl_matrix, q_matrix) # [T, head_dim/2] -> [1, T, 1, head_dim/2]
+    q_mat = q_mat * RoPE_compl_mat # [B, T, H, head_dim/2]
+    k_mat = k_mat * RoPE_compl_mat
 
-    q_matrix = q_matrix * RoPE_compl_matrix # [B, T, H, head_dim/2]
-    k_matrix = k_matrix * RoPE_compl_matrix
+    q_mat = torch.view_as_real(q_mat) # [B, T, H, head_dim/2, 2]
+    k_mat = torch.view_as_real(k_mat)
 
-    q_matrix = torch.view_as_real(q_matrix) # [B, T, H, head_dim/2, 2]
-    k_matrix = torch.view_as_real(k_matrix)
-
-    q_out = q_matrix.flatten(3) # [B, T, H, head_dim]
-    k_out = k_matrix.flatten(3)
+    q_out = q_mat.flatten(3) # [B, T, H, head_dim]
+    k_out = k_mat.flatten(3)
 
     return q_out, k_out
 
