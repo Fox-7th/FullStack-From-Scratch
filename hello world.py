@@ -33,6 +33,16 @@
 pip install tokenizers
 
 """
+import json
+import os
+
+data_dir = "data"
+train_file_name = "tokenizer_data.jsonl"
+train_data_path = os.path.join(data_dir, train_file_name)
+
+model_dir = "model"
+tokenizer_name = "tokenizer.json"
+tokenizer_path = os.path.join(model_dir, tokenizer_name)
 
 from tokenizers import(
     tokenizer,
@@ -53,8 +63,26 @@ trainer = trainers.BpeTrainer(
     vocab_size = 256,
     speicial_tokens = special_tokens,
     show_progress = True,
-
+    initial_alphabet = pre_tokenizers.ByteLevel.alphabet()
 )
+
+def load_data(data_path):
+    with open(data_path, "r", encoding = 'utf-8') as f:
+        for line in f:
+            data = json.loads(line)
+            yield data["text"]
+    
+train_data_iter = load_data(train_data_path)
+print(f"First Data: {next(train_data_iter)}")
+
+# train
+tokenizer.train_from_iterator(train_data_iter, trainer = trainer)
+
+# save
+os.makedirs(model_dir, exist_ok = True)
+tokenizer.save(tokenizer_path))
+tokenizer.model.save(tokenizer_path)
+
 
 
 
