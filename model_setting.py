@@ -88,7 +88,32 @@ print(f"Shape of k: {k_out.shape}")
 print(f"Expected shape: [2, 16, 8, 24]")
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 # Group Querey Attention
+def copy_kv(k, qk_ratio):
+    B, T, H, head_dim = k.shape()
+
+
+    return (
+        k[:, :, :, None, :]
+        .expand(B, T, H, qk_ratio, head_dim) # logically repeated
+        .reshpae(B, T, H * qk_ratio, head_dim)
+    )
+
+
+
+
 class Attention(nn.Module):
     def __init__(self,  args: LMConfig):
         self.n_local_kv_heads = args.n_kv_heads if args.n_kv_heads is None else args.n_heads
@@ -105,28 +130,47 @@ class Attention(nn.Module):
 
         self.attn_drop = nn.Dropout(args.dropout)
         self.resid_drop = nn.Dropout(args.dropout)
+        
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and args.flash_attn:
+        mask = torch.full((1, 1, args.max_seq_len, args.max_seq_len), float("-inf"))
+        mask = torch.triu(mask, diagonal = 1) # Triangle Upper
 
-
-
+        self.register_buffer("mask", mask, persistent = False)
 
     # x: [B, T, model_dim]; RoPE_compl_mat: [T, head_dim/2]
     # 只有刚开始prompt_question 的时候T是>1，在reasoning过程中T一直等于1
     # 第一步，question 整个有很多token，之后reason过程中，每一次forward收到的x都只有1个 token
     # batch 可以>1,多个问题一起推理，不过每次还是每个问题，推理一个token
-    def forward(self, x, RoPE_compl_mat, k_v_cache):
+    def forward(self, x, RoPE_compl_mat, k_v_cache, use_cache = False):
         q, k, v = self.wq(x), self.wk(x), self.wv(x)
+
+        # split head; [B, T, H, head_dim]
         q = q.view(*x.shape[:-1], self.n_local_heads, -1)
         k = k.view(*x.shape[:-1], self.n_local_kv_heads, -1)
         q = v.view(*x.shape[:-1], self.n_local_kv_heads, -1)
+        
         # add pos_embed
         q, k = RoPE_q_k_combine(RoPE_compl_mat, q, v)
 
         # 问题在于 q_k_cache如何初始化，初始化成什么样子
         # q_k_cache [0]是k，v是1
+
         k = torch.cat([k_v_cache[0], k], dim = 1)
         v = torch.cat([k_v_cache[1], q], dim = 1)
 
+        if use_cache:
+            past_kv = (k, v)
+        
+        # exchange dims -> [B, H, T, head_dim]
+        x = x.transpose(1, 2)
+        # k v logically added heads
+        k = copy_kv(k, self.qk_ratio).transpose(1, 2)
+        v = copy_kv(v, self.qk_ratio).transpose(1, 2)
 
+        if flash:
+
+        else: # [B, H, T, T]
+            scores = (q @ k.transpose(-2,  -1)) / math.sqrt(self.head_dim)
 
 
 
