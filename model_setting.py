@@ -43,8 +43,8 @@ def RoPE_compl_matrix(head_dim, token_num: int = 32 * 1024, base: float = 1e5):
 
 
 # add position embedding into Q K matrix
-# input the entire matirx Q and K:  both [B, T, H, head_dim/2], H*head_dim = d_model(既是输入token的长度，也是每一层的隐藏维度)
-# output the entire matrix Q and K: both [B, T, H, head_dim/2].
+# input the entire matirx Q and K:  both [B, T, H, head_dim], H*head_dim = d_model(既是输入token的长度，也是每一层的隐藏维度)
+# output the entire matrix Q and K: both [B, T, H, head_dim].
 def RoPE_q_k_combine(RoPE_compl_mat, q_mat, k_mat):
     # change RoPE matrix shape, for broading
     def RoPE_shape_align(RoPE_compl_matrix, q_k_matrix):
@@ -86,6 +86,51 @@ q_out, k_out = RoPE_q_k_combine(RoPE_compl_mat, q_mat, k_mat)
 print(f"Shape of q: {q_out.shape}")
 print(f"Shape of k: {k_out.shape}")
 print(f"Expected shape: [2, 16, 8, 24]")
+
+
+# Group Querey Attention
+class Attention(nn.Module):
+    def __init__(self,  args: LMConfig):
+        self.n_local_kv_heads = args.n_kv_heads if args.n_kv_heads is None else args.n_heads
+        self.n_local_heads = args.n_heads
+        assert self.n_local_heads % self.n_local_kv_heads == 0
+
+        # ration of q heads ：k/v heads
+        self.qk_ratio = self.n_local_heads // self.n_local_kv_heads
+        self.head_dim = args.dim // self.n_local_heads
+
+        self.wq = nn.Linear(args.dim, self.n_local_heads * self.head_dim)
+        self.wk = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim)
+        self.wv = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim)
+
+        self.attn_drop = nn.Dropout(args.dropout)
+        self.resid_drop = nn.Dropout(args.dropout)
+
+
+
+
+    # x: [B, T, model_dim]; RoPE_compl_mat: [T, head_dim/2]
+    # 只有刚开始prompt_question 的时候T是>1，在reasoning过程中T一直等于1
+    # 第一步，question 整个有很多token，之后reason过程中，每一次forward收到的x都只有1个 token
+    # batch 可以>1,多个问题一起推理，不过每次还是每个问题，推理一个token
+    def forward(self, x, RoPE_compl_mat, k_v_cache):
+        q, k, v = self.wq(x), self.wk(x), self.wv(x)
+        q = q.view(*x.shape[:-1], self.n_local_heads, -1)
+        k = k.view(*x.shape[:-1], self.n_local_kv_heads, -1)
+        q = v.view(*x.shape[:-1], self.n_local_kv_heads, -1)
+        # add pos_embed
+        q, k = RoPE_q_k_combine(RoPE_compl_mat, q, v)
+
+        # 问题在于 q_k_cache如何初始化，初始化成什么样子
+        # q_k_cache [0]是k，v是1
+        k = torch.cat([k_v_cache[0], k], dim = 1)
+        v = torch.cat([k_v_cache[1], q], dim = 1)
+
+
+
+
+
+
 
 
 
