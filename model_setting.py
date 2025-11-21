@@ -36,38 +36,37 @@ class RMSNorm(nn.Module):
 # 因为整个Q K，实际包含 所有头的 Q 和 K, 每个头的Q中都对应token 1 2 3 4 5的q，所以都对应 位置变量pos 1 2 3 4 5
 def RoPE_compl_matrix(head_dim, token_num: int = 32 * 1024, base: float = 1e5):
     theta = 1.0 / (base ** (torch.arange(0, head_dim, 2) / head_dim)) # [head_dim/2]
-    token_length_list = torch.arange(token_num, device = theta.device)
-    emb_length_matrix = torch.outer(token_length_list, theta).float() # [T, head_dim/2]
+    token_ids = torch.arange(token_num, device = theta.device)
+    emb_length_matrix = torch.outer(token_ids, theta).float() # [T, head_dim/2]
     compl_matrix = torch.polar(torch.ones_like(emb_length_matrix), emb_length_matrix)
     return compl_matrix # [T, head_dim/2]
 
 
 # add position embedding into Q K matrix
-# input the entire matirx Q and K:  both [B, T, H, head_dim], H*head_dim = d_model(既是输入token的长度，也是每一层的隐藏维度)
-# output the entire matrix Q and K: both [B, T, H, head_dim].
+# input the entire matirx Q and K:  both [B, T, H, head_dim/2], H*head_dim = d_model(既是输入token的长度，也是每一层的隐藏维度)
+# output the entire matrix Q and K: both [B, T, H, head_dim/2].
 def RoPE_q_k_combine(RoPE_compl_matrix, q_matrix, k_matrix):
     # change RoPE matrix shape, for broading
     def RoPE_shape_align(RoPE_compl_matrix, q_k_matrix):
-        q_k_dim = q_k_matrix.ndim
-        assert q_k_dim > 1
-        assert q_k_matrix.shape[1] == RoPE_compl_matrix.shape[0]
-        assert q_k_matrix.shape[-1] == RoPE_compl_matrix.shape[1]
-        B, T, H, head_dim = q_k_matrix.shape
-        shape2be = [1, T, 1, head_dim/2]
-        new_RoPE_compl_matrix = RoPE_compl_matrix.reshape(shape2be) # [T, head_dim/2] -> [1, T, 1, head_dim/2]
-        return new_RoPE_compl_matrix
-    
-    assert q_matrix.shape == k_matrix.shape
-    assert q_matrix.ndim == 4 and k_matrix.ndim == 4
-    RoPE_compl_matrix = RoPE_shape_align(RoPE_compl_matrix, q_matrix) # [T, head_dim/2] -> [1, T, 1, head_dim/2]
+        q_k_mat_dim = q_k_matrix.ndim
+        assert RoPE_compl_matrix.shape == (q_k_matrix.shape[1], q_k_matrix.shape[-1])
+
+        # [T, head_dim/2] -> [1, T, 1, head_dim/2]
+        shape = [value if idx == 1 or idx == q_k_mat_dim - 1 else 1 for idx,  value in enumerate(q_k_matrix.shape)]
+        RoPE_compl_matrix = RoPE_compl_matrix.reshape(*shape)
+        return RoPE_compl_matrix
+
+
     q_matrix = q_matrix.reshape(*q_matrix.shape[:-1], -1, 2)
     k_matrix = k_matrix.reshape(*k_matrix.shape[:-1], -1, 2) # [B, T, H, head_dim/2, 2]
 
-    q_compl_matrix = torch.view_as_complex(q_matrix) # [B, T, H, head_dim/2]
-    k_compl_matrix = torch.view_as_complex(k_matrix)
+    q_matrix = torch.view_as_complex(q_matrix) # [B, T, H, head_dim/2]
+    k_matrix = torch.view_as_complex(k_matrix)
 
-    q_matrix = q_compl_matrix * RoPE_compl_matrix # [B, T, H, head_dim/2]
-    k_matrix = k_compl_matrix * RoPE_compl_matrix
+    RoPE_compl_matrix = RoPE_shape_align(RoPE_compl_matrix, q_matrix) # [T, head_dim/2] -> [1, T, 1, head_dim/2]
+
+    q_matrix = q_matrix * RoPE_compl_matrix # [B, T, H, head_dim/2]
+    k_matrix = k_matrix * RoPE_compl_matrix
 
     q_matrix = torch.view_as_real(q_matrix) # [B, T, H, head_dim/2, 2]
     k_matrix = torch.view_as_real(k_matrix)
@@ -80,12 +79,14 @@ def RoPE_q_k_combine(RoPE_compl_matrix, q_matrix, k_matrix):
 
 # B, T, H, head_dim = q_k_matrix.shape
 q_mat, k_mat = torch.randn((2, 16, 8, 24)), torch.randn((2, 16, 8, 24 ))
-rope_mat = RoPE_compl_matrix(24, 16)
-print(f"right rope matrix shape: [16, 12]")
-print(f"actual rope matrix shape: {rope_mat.shape}")
+RoPE_compl_mat = RoPE_compl_matrix(24, 16)
+print(f"Right rope matrix shape: [16, 12]")
+print(f"Actual rope matrix shape: {RoPE_compl_mat.shape}")
 
-
-
+q_out, k_out = RoPE_q_k_combine(RoPE_compl_mat, q_mat, k_mat) 
+print(f"Shape of q: {q_out.shape}")
+print(f"Shape of k: {k_out.shape}")
+print(f"Expected shape: [2, 16, 8, 24]")
 
 
 
