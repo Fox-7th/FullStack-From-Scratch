@@ -110,7 +110,7 @@ print("Tokenizr Config Saved!")
 
 # load tokenizer tools
 from tokenizers import(
-    tokenizer,
+    Tokenizer,
     decoders,
     pre_tokenizers,
     trainers,
@@ -126,7 +126,7 @@ special_tokens = ["<unk>", "<s>", "</s>"]
 
 trainer = trainers.BpeTrainer(
     vocab_size = 256,
-    speicial_tokens = special_tokens,
+    special_tokens = special_tokens,
     show_progress = True,
     initial_alphabet = pre_tokenizers.ByteLevel.alphabet()
 )
@@ -147,7 +147,7 @@ print(f"Data Loaded & Model Trained!")
 
 # save
 tokenizer.save(tokenizer_path)
-tokenizer.model.save(tokenizer_path)
+tokenizer.model.save(tokenizer_dir)
 
 tokenizer_loaded = AutoTokenizer.from_pretrained(tokenizer_dir)
 print(f"Model saved and loaded")
@@ -155,22 +155,22 @@ print(f"Model saved and loaded")
 # Test
 # txt -> templated txt
 msg = [{"text": "我们认为下列真理不言而喻 : 人人生而平等，造物者赋予其若干不可剥夺的权利，包括生命权、自由权和追求幸福的权利"}]
-msg_templated = tokenizer.apply_chat_template(
+msg_templated = tokenizer_loaded.apply_chat_template(
     msg,
     tokenize = False
 )
 print(f"Original Input:{msg}")
 print(f"Templated Input:{msg_templated}")
-print(f"Vocab Size:{tokenizer.vocab_size}")
+print(f"Vocab Size:{tokenizer_loaded.vocab_size}")
 
 # templated Txt -> input ids
-msg_tokenized = tokenizer(msg_templated)
+msg_tokenized = tokenizer_loaded(msg_templated)
 print(f"Original Input:{msg}")
 print(f"Tokenized Input:{msg_tokenized}")
 
 # Input_ids -> txt
-id2txt_skip = tokenizer.decode(msg_tokenized["input_ids"], skip_special_tokens = True)
-id2txt = tokenizer.decode(msg_tokenized["input_ids"], skip_special_tokens = False)
+id2txt_skip = tokenizer_loaded.decode(msg_tokenized["input_ids"], skip_special_tokens = True)
+id2txt = tokenizer_loaded.decode(msg_tokenized["input_ids"], skip_special_tokens = False)
 
 print(f"Decoded all token ids: {id2txt}")
 print(f"Decoded non_special token ids: {id2txt_skip}")
