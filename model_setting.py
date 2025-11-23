@@ -12,6 +12,7 @@ from torch import nn
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
+# model_dim 就是 token对应的词向量的长度
 
 # input  [B, T, embed_dim]
 # output [B, T, embed_dim]
@@ -90,16 +91,6 @@ print(f"Expected shape: [2, 16, 8, 24]")
 
 
 
-
-
-
-
-
-
-
-
-
-
 # Group Querey Attention
 def copy_kv(k, qk_ratio):
     B, T, H, head_dim = k.shape
@@ -110,8 +101,6 @@ def copy_kv(k, qk_ratio):
         .expand(B, T, H, qk_ratio, head_dim) # logically repeated
         .reshape(B, T, H * qk_ratio, head_dim)
     )
-
-
 
 
 class Attention(nn.Module):
@@ -163,7 +152,7 @@ class Attention(nn.Module):
             v = torch.cat([k_v_cache[1], v], dim = 1)
         past_kv = (x, v) if use_cache else None
         
-        # exchange dims -> [B, H, T, head_dim]
+        # exchange dims [B, T, H, head_dim]-> [B, H, T, head_dim]
         q = q.transpose(1, 2)
         # k v logically added heads
         k = copy_kv(k, self.qk_ratio).transpose(1, 2)
@@ -179,9 +168,10 @@ class Attention(nn.Module):
                 is_causal = True # 自动做casual mask
             )
 
-        else: # [B, H, T, T]
+        else:
+            # [B, H, T, T]
             scores = (q @ k.transpose(-2,  -1)) / math.sqrt(self.head_dim)
-            scores += self.mask[:,  :,  :x[1],  :x[1]] # mask matrix clip  
+            scores += self.mask[:,  :,  :x.shape[1],  :x.shape[1]] # mask matrix clip  
             scores = F.softmax(scores.float(),  dim=-1).type_as(q)
             scores = self.attn_dropout(scores)
             output = scores @ v
@@ -193,7 +183,7 @@ class Attention(nn.Module):
 # LMConfig_Dense = LMConfig(n_layers=2)
 # attn = Attention(LMConfig_Dense)
 # x = torch.randn((4,  16,  512)) # (batch size, seq len, embed dim)
-# RoPE_compl_mat = RoPE_compl_matrix(64,  16) # (head dim, batch size) 其中 head dim = embed dim / num heads
+# RoPE_compl_mat = RoPE_compl_matrix(64,  16) # (head dim, batch size) 其中 head dim = model_dim / num heads
 # output,  past_kv = attn(x,  RoPE_compl_mat=RoPE_compl_mat,  use_cache=True)
 # print(f'输入张量 x ：size = {x.shape}，RoPE 旋转角： size = {RoPE_compl_mat.shape}')
 # print(f'输出 output: size = {output.shape},  kv_cache 基本信息：size_key = {past_kv[0].shape}, size_value = {past_kv[1].shape}')
@@ -203,7 +193,13 @@ class FeedForward(nn.Module):
         super().__init__()
         if config.hidden_dim is None:
             hidden_dim  = int((4 * config.dim) / 3 * 2)
+            # 直接修改了LMConfig; 向上取整 到 64倍数
             config.hidden_dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
-    
+            config.hidden_dim
+        self.w1 = nn.Linear(config.dim, config.hidden_dim, bias = False)
+        self.w2 = nn.Linear(config.hidden_dim, config.dim, bias = False)
+        self.w3 = nn.Linear(config.dim, config.hidden_dim, bias = False)
+        self.dropout = nn.Dropout(config.dropout)
 
-
+    def forward(self, x):
+        return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
