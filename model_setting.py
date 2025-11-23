@@ -35,6 +35,8 @@ class RMSNorm(nn.Module):
 # [T, head_dim]
 # RoPE 是作用于，每个head的；
 # 因为整个Q K，实际包含 所有头的 Q 和 K, 每个头的Q中都对应token 1 2 3 4 5的q，所以都对应 位置变量pos 1 2 3 4 5
+
+# ->[T, head_dim/2]
 def RoPE_compl_matrix(head_dim, token_num: int = 32 * 1024, base: float = 1e5):
     theta = 1.0 / (base ** (torch.arange(0, head_dim, 2) / head_dim)) # [head_dim/2]
     token_ids = torch.arange(token_num, device = theta.device)
@@ -77,36 +79,32 @@ def RoPE_q_k_combine(RoPE_compl_mat, q_mat, k_mat):
     return q_out, k_out
 
 
-# B, T, H, head_dim = q_k_matrix.shape
-q_mat, k_mat = torch.randn((2, 16, 8, 24)), torch.randn((2, 16, 8, 24 ))
-RoPE_compl_mat = RoPE_compl_matrix(24, 16)
-print(f"Right rope matrix shape: [16, 12]")
-print(f"Actual rope matrix shape: {RoPE_compl_mat.shape}")
+# q_mat, k_mat = torch.randn((2, 16, 8, 24)), torch.randn((2, 16, 8, 24 ))
+# RoPE_compl_mat = RoPE_compl_matrix(24, 16)
+# print(f"Right rope matrix shape: [16, 12]")
+# print(f"Actual rope matrix shape: {RoPE_compl_mat.shape}")
 
-q_out, k_out = RoPE_q_k_combine(RoPE_compl_mat, q_mat, k_mat) 
-print(f"Shape of q: {q_out.shape}")
-print(f"Shape of k: {k_out.shape}")
-print(f"Expected shape: [2, 16, 8, 24]")
-
-
+# q_out, k_out = RoPE_q_k_combine(RoPE_compl_mat, q_mat, k_mat) 
+# print(f"Shape of q: {q_out.shape}")
+# print(f"Shape of k: {k_out.shape}")
+# print(f"Expected shape: [2, 16, 8, 24]")
 
 
 # Group Querey Attention
-def copy_kv(k, qk_ratio):
-    B, T, H, head_dim = k.shape
-
-
+def copy_kv(x, qk_ratio):
+    B, T, H, head_dim = x.shape
     return (
-        k[:, :, :, None, :]
+        x[:, :, :, None, :]
         .expand(B, T, H, qk_ratio, head_dim) # logically repeated
         .reshape(B, T, H * qk_ratio, head_dim)
     )
 
 
+# x: [B, T, model_dim]; RoPE_compl_mat: [T, head_dim/2]
 class Attention(nn.Module):
     def __init__(self,  args: LMConfig):
         super().__init__()
-        self.n_local_kv_heads = args.n_kv_heads if args.n_kv_heads is None else args.n_heads
+        self.n_local_kv_heads = args.n_kv_heads if args.n_kv_heads is not None else args.n_heads
         self.n_local_heads = args.n_heads
         assert self.n_local_heads % self.n_local_kv_heads == 0
 
@@ -119,7 +117,6 @@ class Attention(nn.Module):
         self.wv = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim, bias=False)
         self.wo = nn.Linear(self.n_local_heads * self.head_dim, args.dim, bias=False)
         
-
         self.attn_dropout = nn.Dropout(args.dropout)
         self.resid_dropout = nn.Dropout(args.dropout)
         self.dropout = args.dropout
@@ -150,7 +147,7 @@ class Attention(nn.Module):
         if k_v_cache is not None:
             k = torch.cat([k_v_cache[0], k], dim = 1)
             v = torch.cat([k_v_cache[1], v], dim = 1)
-        past_kv = (x, v) if use_cache else None
+        past_kv = (k, v) if use_cache else None
         
         # exchange dims [B, T, H, head_dim]-> [B, H, T, head_dim]
         q = q.transpose(1, 2)
@@ -180,7 +177,8 @@ class Attention(nn.Module):
         output = self.resid_dropout(self.wo(output))
         return output,  past_kv
 
-# LMConfig_Dense = LMConfig(n_layers=2)
+
+LMConfig_Dense = LMConfig()
 # attn = Attention(LMConfig_Dense)
 # x = torch.randn((4,  16,  512)) # (batch size, seq len, embed dim)
 # RoPE_compl_mat = RoPE_compl_matrix(64,  16) # (head dim, batch size) 其中 head dim = model_dim / num heads
@@ -188,6 +186,8 @@ class Attention(nn.Module):
 # print(f'输入张量 x ：size = {x.shape}，RoPE 旋转角： size = {RoPE_compl_mat.shape}')
 # print(f'输出 output: size = {output.shape},  kv_cache 基本信息：size_key = {past_kv[0].shape}, size_value = {past_kv[1].shape}')
 
+
+# [B, T, model_dim]
 class FeedForward(nn.Module):
     def __init__(self, config: LMConfig):
         super().__init__()
@@ -206,16 +206,43 @@ class FeedForward(nn.Module):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
-LMConfig_Dense = LMConfig()
-ffn = FeedForward(LMConfig_Dense)
-x = torch.rand((4, 16, 512))
-output = ffn(x)
+# LMConfig_Dense = LMConfig()
+# ffn = FeedForward(LMConfig_Dense)
+# x = torch.rand((4, 16, 512))
+# output = ffn(x)
 
-print(f'给定输入 x: size = {x.shape} 下的输出 output：size = {output.shape}')
-
-
+# print(f'给定输入 x: size = {x.shape} 下的输出 output：size = {output.shape}')
 
 
+class MiniMindBlock(nn.Module):
+    def __init__(self, layer_id, config: LMConfig):
+        super().__init__()
+        self.n_heads = config.n_heads
+        self.dim = config.dim
+        self.head_dim = config.dim // config.n_heads
+        self.attention = Attention(config)
 
+        # 怎么用呢
+        self.layer_id = layer_id
+        self.attention_norm = RMSNorm(config.dim, config.norm_eps)
+        self.ffn_norm = RMSNorm(config.dim, config.norm_eps)
+        self.feed_forward = FeedForward(config)
+
+    def forward(self, x, RoPE_compl_mat, k_v_cache = None, use_cache = False):
+        h_attn, past_kv = self.attention(
+            self.attention_norm(x),
+            RoPE_compl_mat,
+            k_v_cache = k_v_cache,
+            use_cache = use_cache
+        )
+        h = x + h_attn
+        out = h + self.feed_forward(self.ffn_norm(h))
+        return out, past_kv
+
+miniblock = MiniMindBlock(1,  LMConfig_Dense)
+x = torch.randn((4,  16,  512))
+pos_cis = RoPE_compl_matrix(64,  16)
+out,  past_kv = miniblock(x,  pos_cis,  use_cache=True)
+print(f'输出 output 信息: size = {out.shape}\n该 Block 维护的 KV Cache 信息：size_key =  {past_kv[0].shape}, size_value = {past_kv[1].shape}')
 
 
