@@ -205,7 +205,6 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
-
 # LMConfig_Dense = LMConfig()
 # ffn = FeedForward(LMConfig_Dense)
 # x = torch.rand((4, 16, 512))
@@ -239,10 +238,56 @@ class MiniMindBlock(nn.Module):
         out = h + self.feed_forward(self.ffn_norm(h))
         return out, past_kv
 
-miniblock = MiniMindBlock(1,  LMConfig_Dense)
-x = torch.randn((4,  16,  512))
-pos_cis = RoPE_compl_matrix(64,  16)
-out,  past_kv = miniblock(x,  pos_cis,  use_cache=True)
-print(f'输出 output 信息: size = {out.shape}\n该 Block 维护的 KV Cache 信息：size_key =  {past_kv[0].shape}, size_value = {past_kv[1].shape}')
+# miniblock = MiniMindBlock(1,  LMConfig_Dense)
+# x = torch.randn((4,  16,  512))
+# pos_cis = RoPE_compl_matrix(64,  16)
+# out,  past_kv = miniblock(x,  pos_cis,  use_cache=True)
+# print(f'输出 output 信息: size = {out.shape}\n该 Block 维护的 KV Cache 信息：size_key =  {past_kv[0].shape}, size_value = {past_kv[1].shape}')
+
+
+from transformers import PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
+class MiniMindLM(PreTrainedModel):
+    config_class = LMConfig
+
+    def __init__(self,  params: LMConfig = None):
+        self.params = params or LMConfig()
+        super().__init__(self.params)
+        self.vocab_size,  self.n_layers = params.vocab_size,  params.n_layers
+        # 映射：词表维度 -> 嵌入维度
+        self.tok_embeddings = nn.Embedding(params.vocab_size,  params.dim)
+        self.dropout = nn.Dropout(params.dropout)
+        # 这里一个是数值1 一个是字母l;堆叠 n_layers 层
+        self.layers = nn.ModuleList([MiniMindBlock(1,  params) for l in range(self.n_layers)])
+        # 最后一层 后边的 RMSNorm
+        self.norm = RMSNorm(params.dim,  eps = params.norm_eps) 
+        # 向vocab_size维度 映射
+        self.output = nn.Linear(params.dim,  params.vocab_size,  bias=False)
+        # 共享
+        self.tok_embeddings.weight = self.output.weight
+
+        self.register_buffer(
+            "pos_cis", 
+            RoPE_compl_matrix(dim=params.dim // params.n_heads,  theta=params.rope_theta), 
+            # 不会写进state_dict，至于为什么，还需要探索下
+            persistent=False
+        )
+        # 有点不懂了
+        self.OUT = CausalLMOutputWithPast()
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
 
 

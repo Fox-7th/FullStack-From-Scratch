@@ -10,3 +10,23 @@ dim 2 @ dim 2, as ususal
 dim 3 @ dim 2 only last 2 dim matmul
 dim 3 @ dim 3 only last 2 dim matmul
 Summary: only check whether last 2 dims can matmul
+
+
+映射：词表大小（token数量）维度 -> 嵌入维度
+Embedding(x) 不是矩阵相乘Embed_mat @ x，而是 查表 方式，这个要注意
+Embedding 的使用应该是 
+1、Embedding矩阵的维度是[vocab_size, model_dim], 
+2、输入的x 维度应该是[B, T]
+转化为了 [B, T, model_dim]。
+i.e.  B*T个key（范围0-vocab_size）每个key（比如说101），去除Embedding 矩阵的对应行（第101行）
+
+
+
+
+
+
+
+
+
+
+
