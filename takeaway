@@ -1,0 +1,12 @@
+from curses import use_default_colors
+
+from numpy import multiply
+
+
+real -> complex; complex multiplication equals to rotate
+
+Multiplication of Matrices:
+dim 2 @ dim 2, as ususal
+dim 3 @ dim 2 only last 2 dim matmul
+dim 3 @ dim 3 only last 2 dim matmul
+Summary: only check whether last 2 dims can matmul

@@ -195,11 +195,27 @@ class FeedForward(nn.Module):
             hidden_dim  = int((4 * config.dim) / 3 * 2)
             # 直接修改了LMConfig; 向上取整 到 64倍数
             config.hidden_dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
-            config.hidden_dim
+
         self.w1 = nn.Linear(config.dim, config.hidden_dim, bias = False)
         self.w2 = nn.Linear(config.hidden_dim, config.dim, bias = False)
         self.w3 = nn.Linear(config.dim, config.hidden_dim, bias = False)
         self.dropout = nn.Dropout(config.dropout)
 
+    # [B, T, model_dim]
     def forward(self, x):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+
+
+LMConfig_Dense = LMConfig()
+ffn = FeedForward(LMConfig_Dense)
+x = torch.rand((4, 16, 512))
+output = ffn(x)
+
+print(f'给定输入 x: size = {x.shape} 下的输出 output：size = {output.shape}')
+
+
+
+
+
+
+
