@@ -102,13 +102,13 @@ print(f"Expected shape: [2, 16, 8, 24]")
 
 # Group Querey Attention
 def copy_kv(k, qk_ratio):
-    B, T, H, head_dim = k.shape()
+    B, T, H, head_dim = k.shape
 
 
     return (
         k[:, :, :, None, :]
         .expand(B, T, H, qk_ratio, head_dim) # logically repeated
-        .reshpae(B, T, H * qk_ratio, head_dim)
+        .reshape(B, T, H * qk_ratio, head_dim)
     )
 
 
@@ -116,6 +116,7 @@ def copy_kv(k, qk_ratio):
 
 class Attention(nn.Module):
     def __init__(self,  args: LMConfig):
+        super().__init__()
         self.n_local_kv_heads = args.n_kv_heads if args.n_kv_heads is None else args.n_heads
         self.n_local_heads = args.n_heads
         assert self.n_local_heads % self.n_local_kv_heads == 0
@@ -124,14 +125,17 @@ class Attention(nn.Module):
         self.qk_ratio = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // self.n_local_heads
 
-        self.wq = nn.Linear(args.dim, self.n_local_heads * self.head_dim)
-        self.wk = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim)
-        self.wv = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim)
-
-        self.attn_drop = nn.Dropout(args.dropout)
-        self.resid_drop = nn.Dropout(args.dropout)
+        self.wq = nn.Linear(args.dim, self.n_local_heads * self.head_dim, bias=False)
+        self.wk = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim, bias=False)
+        self.wv = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim, bias=False)
+        self.wo = nn.Linear(self.n_local_heads * self.head_dim, args.dim, bias=False)
         
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and args.flash_attn:
+
+        self.attn_dropout = nn.Dropout(args.dropout)
+        self.resid_dropout = nn.Dropout(args.dropout)
+        self.dropout = args.dropout
+
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and args.flash_attn
         mask = torch.full((1, 1, args.max_seq_len, args.max_seq_len), float("-inf"))
         mask = torch.triu(mask, diagonal = 1) # Triangle Upper
 
@@ -141,45 +145,65 @@ class Attention(nn.Module):
     # 只有刚开始prompt_question 的时候T是>1，在reasoning过程中T一直等于1
     # 第一步，question 整个有很多token，之后reason过程中，每一次forward收到的x都只有1个 token
     # batch 可以>1,多个问题一起推理，不过每次还是每个问题，推理一个token
-    def forward(self, x, RoPE_compl_mat, k_v_cache, use_cache = False):
+    def forward(self, x, RoPE_compl_mat, k_v_cache = None, use_cache = False):
         q, k, v = self.wq(x), self.wk(x), self.wv(x)
 
         # split head; [B, T, H, head_dim]
         q = q.view(*x.shape[:-1], self.n_local_heads, -1)
         k = k.view(*x.shape[:-1], self.n_local_kv_heads, -1)
-        q = v.view(*x.shape[:-1], self.n_local_kv_heads, -1)
+        v = v.view(*x.shape[:-1], self.n_local_kv_heads, -1)
         
         # add pos_embed
-        q, k = RoPE_q_k_combine(RoPE_compl_mat, q, v)
+        q, k = RoPE_q_k_combine(RoPE_compl_mat, q, k)
 
         # 问题在于 q_k_cache如何初始化，初始化成什么样子
         # q_k_cache [0]是k，v是1
-
-        k = torch.cat([k_v_cache[0], k], dim = 1)
-        v = torch.cat([k_v_cache[1], q], dim = 1)
-
-        if use_cache:
-            past_kv = (k, v)
+        if k_v_cache is not None:
+            k = torch.cat([k_v_cache[0], k], dim = 1)
+            v = torch.cat([k_v_cache[1], v], dim = 1)
+        past_kv = (x, v) if use_cache else None
         
         # exchange dims -> [B, H, T, head_dim]
-        x = x.transpose(1, 2)
+        q = q.transpose(1, 2)
         # k v logically added heads
         k = copy_kv(k, self.qk_ratio).transpose(1, 2)
         v = copy_kv(v, self.qk_ratio).transpose(1, 2)
 
-        if flash:
+        # flash or normal attention computation
+        if self.flash and x.shape[1] != 1:
+            dropout_p = self.dropout if self.training else 0.0
+            output = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=None,
+                dropout_p = dropout_p, # 
+                is_causal = True # 自动做casual mask
+            )
 
         else: # [B, H, T, T]
             scores = (q @ k.transpose(-2,  -1)) / math.sqrt(self.head_dim)
+            scores += self.mask[:,  :,  :x[1],  :x[1]] # mask matrix clip  
+            scores = F.softmax(scores.float(),  dim=-1).type_as(q)
+            scores = self.attn_dropout(scores)
+            output = scores @ v
 
+        output = output.transpose(1,  2).reshape(*x.shape[:-1],  -1)
+        output = self.resid_dropout(self.wo(output))
+        return output,  past_kv
 
+# LMConfig_Dense = LMConfig(n_layers=2)
+# attn = Attention(LMConfig_Dense)
+# x = torch.randn((4,  16,  512)) # (batch size, seq len, embed dim)
+# RoPE_compl_mat = RoPE_compl_matrix(64,  16) # (head dim, batch size) 其中 head dim = embed dim / num heads
+# output,  past_kv = attn(x,  RoPE_compl_mat=RoPE_compl_mat,  use_cache=True)
+# print(f'输入张量 x ：size = {x.shape}，RoPE 旋转角： size = {RoPE_compl_mat.shape}')
+# print(f'输出 output: size = {output.shape},  kv_cache 基本信息：size_key = {past_kv[0].shape}, size_value = {past_kv[1].shape}')
 
-
-
-
-
-
-
-
+class FeedForward(nn.Module):
+    def __init__(self, config: LMConfig):
+        super().__init__()
+        if config.hidden_dim is None:
+            hidden_dim  = int((4 * config.dim) / 3 * 2)
+            config.hidden_dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
+    
 
 
