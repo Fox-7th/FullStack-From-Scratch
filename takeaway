@@ -22,8 +22,13 @@ i.e.  B*T个key（范围0-vocab_size）每个key（比如说101），去除Embed
 
 
 
+普通的加减乘法不需要提高精度；
+涉及 softmax、e^x 的复杂运算要提高精度”
 
+工程上更精确的版本是：
 
+✅ 线性运算（加减乘、矩阵乘、激活函数）→ 低精度即可
+✅ 概率运算（exp、log、softmax、norm、loss）→ 必须 fp32
 
 
 
