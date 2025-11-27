@@ -191,14 +191,14 @@ LMConfig_Dense = LMConfig()
 class FeedForward(nn.Module):
     def __init__(self, config: LMConfig):
         super().__init__()
-        if config.hidden_dim is None:
+        if config.dim is None:
             hidden_dim  = int((4 * config.dim) / 3 * 2)
             # 直接修改了LMConfig; 向上取整 到 64倍数
-            config.hidden_dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
+            config.dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
 
-        self.w1 = nn.Linear(config.dim, config.hidden_dim, bias = False)
-        self.w2 = nn.Linear(config.hidden_dim, config.dim, bias = False)
-        self.w3 = nn.Linear(config.dim, config.hidden_dim, bias = False)
+        self.w1 = nn.Linear(config.dim, config.dim, bias = False)
+        self.w2 = nn.Linear(config.dim, config.dim, bias = False)
+        self.w3 = nn.Linear(config.dim, config.dim, bias = False)
         self.dropout = nn.Dropout(config.dropout)
 
     # [B, T, model_dim]

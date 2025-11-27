@@ -12,21 +12,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-
 config = LMConfig()
 
 
 
-
-
 class RMSNorm(nn.Module):
-    def __init__(self,
-                 dim: int = config.hidden_dim,
-                 epsilon: float = config.norm_eps):
+    def __init__(self, config: LMConfig = config):
         super().__init__()
-        self.epsilon = epsilon
-        self.scale = nn.Parameter(torch.ones(dim))
-    
+        self.epsilon = config.norm_eps
+        self.scale = nn.Parameter(torch.ones(config.dim))
+
     # [B, T, model_dim]
     def forward(self, x):
         x_float = x.float()
@@ -36,7 +31,7 @@ class RMSNorm(nn.Module):
         return x_norms * self.scale
 
 test_input = torch.randn(2, 4, 512)
-rmsnorm = RMSNorm(dim = 512)
+rmsnorm = RMSNorm()
 output = rmsnorm(test_input)
 print(output.shape)  # Expected output shape: (2, 4, 512)
 print(output)
@@ -60,23 +55,22 @@ class Attention(nn.Module):
     def __init__(self, config: LMConfig = config):
         super().__init__()
 
-        self.dim = config.dim # embedding的维度
-        self.hidden_dim = config.hidden_dim # attention 内部维度
+        dim = config.dim # attention 内部维度
+        gqa = config.gqa  # 是否kv共享头
+        
         self.n_heads = config.n_heads # q 头数量
-        self.head_dim = config.hidden_dim // config.n_heads
-        self.gqa = config.gqa  # 是否kv共享
-        self.n_kv_heads = config.n_kv_heads if self.gqa else config.n_heads 
-        # self.kv_head_dim = self.head_dim
+        self.head_dim = dim // self.n_heads
+        self.n_kv_heads = config.n_kv_heads if gqa else self.n_heads 
 
         self.scale = self.head_dim ** -0.5
         self.dropout = nn.Dropout(config.dropout)
         self.flash_attn = config.flash_attn
         self.max_seq_len = config.max_seq_len
 
-        self.q_mat = nn.Linear(self.dim, self.hidden_dim, bias = False)
-        self.k_mat = nn.Linear(self.dim, self.n_kv_heads * self.head_dim, bias = False)
-        self.v_mat = nn.Linear(self.dim, self.n_kv_heads * self.head_dim, bias = False)
-        self.o_mat = nn.Linear(self.hidden_dim, self.dim, bias = False)
+        self.q_mat = nn.Linear(dim, config.n_heads * self.head_dim, bias = False)
+        self.k_mat = nn.Linear(dim, self.n_kv_heads * self.head_dim, bias = False)
+        self.v_mat = nn.Linear(dim, self.n_kv_heads * self.head_dim, bias = False)
+        self.o_mat = nn.Linear(config.n_heads * self.head_dim, dim, bias = False)
 
 
         mask = torch.full((1, 1, self.max_seq_len, self.max_seq_len), float("-inf"))
@@ -86,7 +80,6 @@ class Attention(nn.Module):
 
     # x: [B, T, dim]
     def forward(self, x):
-
         # [B, T, hidden_dim] or[B, T, self.n_kv_heads * self.head_dim]
         q, k, v = self.q_mat(x), self.k_mat(x), self.v_mat(x)
         # [B, T, n_heads(kv_head), head_dim] head spllit 
@@ -95,7 +88,6 @@ class Attention(nn.Module):
         v = v.view(*v.shape[:-1], self.n_kv_heads, -1)
         
         q_kv_head_ratio = self.n_heads // self.n_kv_heads
-
         # kv -> q alignment
         # [B, T, n_kv_head, head_dim] -> [B, T, n_heads, head_dim]. 
         k = kv_expand(k, q_kv_head_ratio)
@@ -127,48 +119,45 @@ class Attention(nn.Module):
 # print(output.shape)  # Expected output shape: (2, 17, 100)
 
 
+
 class Forward(nn.Module):
     def __init__(self, config: LMConfig = config):
         super().__init__()
-        mid_dim = int(config.hidden_dim * 4 / 3)
-        mid_dim = (mid_dim + config.multiple_of - 1) // config.multiple_of * config.multiple_of  # 向上取整为multiple_of的倍数
-        self.dropout = nn.Dropout(config.dropout)
 
-        self.w1 = nn.Linear(config.dim, mid_dim, bias = False)
-        self.w2 = nn.Linear(mid_dim, config.dim, bias = False)
-        self.w3 = nn.Linear(config.dim, mid_dim, bias = False)
+        if config.dim is None:
+            # hidden_dim = 4 * config.dim
+            # hidden_dim = int(2 * hidden_dim / 3)
+            # config.hidden_dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
+        
+        # 这里用hidden_dim参数；我还以为 hidden dim是中间的，看一看 
+
+            hidden_dim = int(config.dim * 4 / 3)
+            hidden_dim = (hidden_dim + config.multiple_of - 1) // config.multiple_of * config.multiple_of  # 向上取整为multiple_of的倍数
+            self.dropout = nn.Dropout(config.dropout)
+
+        self.w1 = nn.Linear(config.dim, hidden_dim, bias = False)
+        self.w2 = nn.Linear(hidden_dim, config.dim, bias = False)
+        self.w3 = nn.Linear(config.dim, hidden_dim, bias = False)
     
     # x: [B, T, dim]
     def forward(self, x):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 test_input = torch.randn(2, 4, 64)
-forward = Forward(dim = 64, hidden_dim = 128)
+forward = Forward()
 output = forward(test_input)
 print(output.shape)  # Expected output shape: (2, 4, 64)
  
 
 
 class ModelBlock(nn.Module):
-    def __init__(self,
-                 dim: int = config.dim,
-                 hidden_dim: int = config.hidden_dim,
-                 n_heads: int = config.n_heads,
-                 n_kv_heads: int = config.n_kv_heads,
-                 dropout: float = config.dropout,
-                 flash_attn: bool = config.flash_attn,
-                 gqa: bool = config.gqa,
-                 max_seq_len: int = config.max_seq_len
-                 ):
+    def __init__(self, config: LMConfig = config):
         super().__init__()
-        self.attn_norm = RMSNorm(dim = dim, epsilon = config.norm_eps)
+        self.attn_norm = RMSNorm()
         self.attn = Attention()
         
-        self.ffn_norm = RMSNorm(dim = dim, epsilon = config.norm_eps)
-        self.ffn = Forward(dim = dim,
-                           hidden_dim = hidden_dim,
-                           dropout = dropout,
-                           multiple_of = config.multiple_of)
+        self.ffn_norm = RMSNorm()
+        self.ffn = Forward()
     
     # x: [B, T, dim]
     def forward(self, x):
@@ -176,6 +165,10 @@ class ModelBlock(nn.Module):
         x = x + self.ffn(self.ffn_norm(x))
         return x
 
+test_input = torch.randn(2, 4, 512)
+model_block = ModelBlock()
+output = model_block(test_input)
+print(output.shape)  # Expected output shape: (2, 4, 512)
 
 
 
