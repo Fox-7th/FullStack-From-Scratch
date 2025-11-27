@@ -36,12 +36,13 @@ class LMConfig(PretrainedConfig):
             **kwargs,
     ):
         self.dim = dim
+        self.hidden_dim = hidden_dim
         self.n_layers = n_layers
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads
         self.gqa = gqa
         self.vocab_size = vocab_size
-        self.dim = hidden_dim
+        self.dim = dim
         self.multiple_of = multiple_of
         self.norm_eps = norm_eps
         self.max_seq_len = max_seq_len

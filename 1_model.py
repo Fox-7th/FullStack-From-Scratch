@@ -15,7 +15,6 @@ import math
 config = LMConfig()
 
 
-
 class RMSNorm(nn.Module):
     def __init__(self, config: LMConfig = config):
         super().__init__()
@@ -113,8 +112,8 @@ class Attention(nn.Module):
         return score
     
 # [B, T, dim]
-# test_input = torch.randn(2, 17, 100)
-# attn = Attention(dim = 100, hidden_dim = 512, n_heads = 8, n_kv_heads = 2, gqa = True)
+# test_input = torch.randn(2, 17, config.dim)
+# attn = Attention()
 # output = attn(test_input)
 # print(output.shape)  # Expected output shape: (2, 17, 100)
 
@@ -124,17 +123,12 @@ class Forward(nn.Module):
     def __init__(self, config: LMConfig = config):
         super().__init__()
 
-        if config.dim is None:
-            # hidden_dim = 4 * config.dim
-            # hidden_dim = int(2 * hidden_dim / 3)
-            # config.hidden_dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
-        
-        # 这里用hidden_dim参数；我还以为 hidden dim是中间的，看一看 
-
+        if config.hidden_dim is None:
             hidden_dim = int(config.dim * 4 / 3)
             hidden_dim = (hidden_dim + config.multiple_of - 1) // config.multiple_of * config.multiple_of  # 向上取整为multiple_of的倍数
-            self.dropout = nn.Dropout(config.dropout)
-
+        else:
+            hidden_dim = config.hidden_dim
+        self.dropout = nn.Dropout(config.dropout)
         self.w1 = nn.Linear(config.dim, hidden_dim, bias = False)
         self.w2 = nn.Linear(hidden_dim, config.dim, bias = False)
         self.w3 = nn.Linear(config.dim, hidden_dim, bias = False)
@@ -143,10 +137,10 @@ class Forward(nn.Module):
     def forward(self, x):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
-test_input = torch.randn(2, 4, 64)
+test_input = torch.randn(2, 4, config.dim)
 forward = Forward()
 output = forward(test_input)
-print(output.shape)  # Expected output shape: (2, 4, 64)
+print(output.shape)  # Expected output shape: (2, 4, config.dim)
  
 
 
@@ -165,10 +159,10 @@ class ModelBlock(nn.Module):
         x = x + self.ffn(self.ffn_norm(x))
         return x
 
-test_input = torch.randn(2, 4, 512)
-model_block = ModelBlock()
-output = model_block(test_input)
-print(output.shape)  # Expected output shape: (2, 4, 512)
+# test_input = torch.randn(2, 4, 512)
+# model_block = ModelBlock()
+# output = model_block(test_input)
+# print(output.shape)  # Expected output shape: (2, 4, 512)
 
 
 
