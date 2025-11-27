@@ -29,11 +29,11 @@ class RMSNorm(nn.Module):
         x_norms = x_norms.type_as(x)
         return x_norms * self.scale
 
-test_input = torch.randn(2, 4, 512)
-rmsnorm = RMSNorm()
-output = rmsnorm(test_input)
-print(output.shape)  # Expected output shape: (2, 4, 512)
-print(output)
+# test_input = torch.randn(2, 4, 512)
+# rmsnorm = RMSNorm()
+# output = rmsnorm(test_input)
+# print(output.shape)  # Expected output shape: (2, 4, 512)
+# print(output)
 
 # x为k v 矩阵
 # [B, T, self.n_kv_heads, self.head_dim] -> # [B, T, self.n_head * q_kv_head_ratio, self.head_dim]
@@ -117,8 +117,6 @@ class Attention(nn.Module):
 # output = attn(test_input)
 # print(output.shape)  # Expected output shape: (2, 17, 100)
 
-
-
 class Forward(nn.Module):
     def __init__(self, config: LMConfig = config):
         super().__init__()
@@ -137,19 +135,17 @@ class Forward(nn.Module):
     def forward(self, x):
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
-test_input = torch.randn(2, 4, config.dim)
-forward = Forward()
-output = forward(test_input)
-print(output.shape)  # Expected output shape: (2, 4, config.dim)
+# test_input = torch.randn(2, 4, config.dim)
+# forward = Forward()
+# output = forward(test_input)
+# print(output.shape)  # Expected output shape: (2, 4, config.dim)
  
-
 
 class ModelBlock(nn.Module):
     def __init__(self, config: LMConfig = config):
         super().__init__()
         self.attn_norm = RMSNorm()
         self.attn = Attention()
-        
         self.ffn_norm = RMSNorm()
         self.ffn = Forward()
     
@@ -159,15 +155,36 @@ class ModelBlock(nn.Module):
         x = x + self.ffn(self.ffn_norm(x))
         return x
 
-# test_input = torch.randn(2, 4, 512)
+# test_input = torch.randn(2, 4, config.dim)
 # model_block = ModelBlock()
 # output = model_block(test_input)
-# print(output.shape)  # Expected output shape: (2, 4, 512)
+# print(output.shape)  # Expected output shape: (2, 4, config.dim)
 
+class Model(nn.Module):
+    def __init__(self, config: LMConfig = config):
+        super().__init__()
+        self.token_emb = nn.Embedding(config.vocab_size, config.dim)
+        self.blocks = nn.ModuleList([ModelBlock() for _ in range(config.n_layers)])
+        self.norm = RMSNorm()
+        self.output_head = nn.Linear(config.dim, config.vocab_size, bias = False)
+        self.output_head.weight = self.token_emb.weight  # weight tying
+        # PyTorch中共享权重时只需要“参数对象相同”，不需要显式转置，因为在计算时维度会自动以不同方式被使用。
+        # nn.Linear(in, out) 的 weight 形状是 [out, in]，而不是 [in, out]
+        # nn.Linear(in, out) 的计算公式：y = x @ W.T + b
+ 
+    # x: [B, T]
+    def forward(self, x):
+        x = self.token_emb(x)  # [B, T, dim]
+        for block in self.blocks:
+            x = block(x)
+        x = self.norm(x)
+        logits = self.output_head(x)  # [B, T, vocab_size]
+        return logits
 
-
-
-
+test_input = torch.randint(0, config.vocab_size, (2, 17))
+model = Model()
+output = model(test_input)
+print(output.shape)  # Expected output shape: (2, 17, config.vocab_size)
 
 
 

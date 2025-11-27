@@ -32,6 +32,12 @@ i.e.  B*T个key（范围0-vocab_size）每个key（比如说101），去除Embed
 
 
 
+        # PyTorch中共享权重时只需要“参数对象相同”，不需要显式转置，因为在计算时维度会自动以不同方式被使用。
+        # nn.Linear(in, out) 的 weight 形状是 [out, in]，而不是 [in, out]
+        # nn.Linear(in, out) 的计算公式：y = x @ W.T + b
+
+
+
 
 
 
