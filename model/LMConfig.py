@@ -7,12 +7,13 @@ class LMConfig(PretrainedConfig):
 
     def __init__(
             self,
-            dim: int = 512,
+            dim: int = 512, # dimension of token embeddings
             n_layers: int = 1, # n_layers set to 1 to enable local practice
             n_heads: int = 8,
+            gqa: bool = True, # whether to use GQA (Grouped Query Attention)
             n_kv_heads: int = 2,
             vocab_size: int = 6400,
-            hidden_dim: int = None,
+            hidden_dim: int = None, # hidden dimension in attention and feedforward layers
             multiple_of: int = 64,
             norm_eps: float = 1e-5,
             max_seq_len: int = 8192,
@@ -38,6 +39,7 @@ class LMConfig(PretrainedConfig):
         self.n_layers = n_layers
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads
+        self.gqa = gqa
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.multiple_of = multiple_of
