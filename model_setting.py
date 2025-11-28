@@ -110,12 +110,12 @@ class Attention(nn.Module):
 
         # ration of q heads ：k/v heads
         self.qk_ratio = self.n_local_heads // self.n_local_kv_heads
-        self.head_dim = args.dim // self.n_local_heads
+        self.head_dim = args.head_dim // self.n_local_heads
 
-        self.wq = nn.Linear(args.dim, self.n_local_heads * self.head_dim, bias=False)
-        self.wk = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim, bias=False)
-        self.wv = nn.Linear(args.dim, self.n_local_kv_heads * self.head_dim, bias=False)
-        self.wo = nn.Linear(self.n_local_heads * self.head_dim, args.dim, bias=False)
+        self.wq = nn.Linear(args.head_dim, self.n_local_heads * self.head_dim, bias=False)
+        self.wk = nn.Linear(args.head_dim, self.n_local_kv_heads * self.head_dim, bias=False)
+        self.wv = nn.Linear(args.head_dim, self.n_local_kv_heads * self.head_dim, bias=False)
+        self.wo = nn.Linear(self.n_local_heads * self.head_dim, args.head_dim, bias=False)
         
         self.attn_dropout = nn.Dropout(args.dropout)
         self.resid_dropout = nn.Dropout(args.dropout)
@@ -191,14 +191,14 @@ LMConfig_Dense = LMConfig()
 class FeedForward(nn.Module):
     def __init__(self, config: LMConfig):
         super().__init__()
-        if config.dim is None:
-            hidden_dim  = int((4 * config.dim) / 3 * 2)
+        if config.head_dim is None:
+            hidden_dim  = int((4 * config.head_dim) / 3 * 2)
             # 直接修改了LMConfig; 向上取整 到 64倍数
-            config.dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
+            config.head_dim = config.multiple_of * ((hidden_dim + config.multiple_of - 1) // config.multiple_of)
 
-        self.w1 = nn.Linear(config.dim, config.dim, bias = False)
-        self.w2 = nn.Linear(config.dim, config.dim, bias = False)
-        self.w3 = nn.Linear(config.dim, config.dim, bias = False)
+        self.w1 = nn.Linear(config.head_dim, config.head_dim, bias = False)
+        self.w2 = nn.Linear(config.head_dim, config.head_dim, bias = False)
+        self.w3 = nn.Linear(config.head_dim, config.head_dim, bias = False)
         self.dropout = nn.Dropout(config.dropout)
 
     # [B, T, model_dim]
@@ -217,14 +217,14 @@ class MiniMindBlock(nn.Module):
     def __init__(self, layer_id, config: LMConfig):
         super().__init__()
         self.n_heads = config.n_heads
-        self.dim = config.dim
-        self.head_dim = config.dim // config.n_heads
+        self.dim = config.head_dim
+        self.head_dim = config.head_dim // config.n_heads
         self.attention = Attention(config)
 
         # 怎么用呢
         self.layer_id = layer_id
-        self.attention_norm = RMSNorm(config.dim, config.norm_eps)
-        self.ffn_norm = RMSNorm(config.dim, config.norm_eps)
+        self.attention_norm = RMSNorm(config.head_dim, config.norm_eps)
+        self.ffn_norm = RMSNorm(config.head_dim, config.norm_eps)
         self.feed_forward = FeedForward(config)
 
     def forward(self, x, RoPE_compl_mat, k_v_cache = None, use_cache = False):
@@ -256,20 +256,20 @@ class MiniMindLM(PreTrainedModel):
         super().__init__(self.params)
         self.vocab_size,  self.n_layers = params.vocab_size,  params.n_layers
         # 映射：词表维度 -> 嵌入维度
-        self.tok_embeddings = nn.Embedding(params.vocab_size,  params.dim)
+        self.tok_embeddings = nn.Embedding(params.vocab_size,  params.head_dim)
         self.dropout = nn.Dropout(params.dropout)
         # 这里一个是数值1 一个是字母l;堆叠 n_layers 层
         self.layers = nn.ModuleList([MiniMindBlock(1,  params) for l in range(self.n_layers)])
         # 最后一层 后边的 RMSNorm
-        self.norm = RMSNorm(params.dim,  eps = params.norm_eps) 
+        self.norm = RMSNorm(params.head_dim,  eps = params.norm_eps) 
         # 向vocab_size维度 映射
-        self.output = nn.Linear(params.dim,  params.vocab_size,  bias=False)
+        self.output = nn.Linear(params.head_dim,  params.vocab_size,  bias=False)
         # 共享
         self.tok_embeddings.weight = self.output.weight
 
         self.register_buffer(
             "pos_cis", 
-            RoPE_compl_matrix(dim=params.dim // params.n_heads,  theta=params.rope_theta), 
+            RoPE_compl_matrix(dim=params.head_dim // params.n_heads,  theta=params.rope_theta), 
             # 不会写进state_dict，至于为什么，还需要探索下
             persistent=False
         )
